@@ -83,6 +83,10 @@ class EarlyStoppingCallback:
         
         return control
     
+    def on_save(self, args, state, control, **kwargs):
+        """Called when model is saved."""
+        return control
+    
     def on_train_end(self, args, state, control, **kwargs):
         """Called at the end of training."""
         if self.should_stop:
