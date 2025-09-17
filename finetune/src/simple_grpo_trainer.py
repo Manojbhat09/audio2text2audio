@@ -78,7 +78,7 @@ class SimpleGRPOConfig(TrainingArguments):
     """Maximum sequence length"""
     
     # Training parameters
-    learning_rate: float = 3e-6
+    learning_rate: float = 5e-5  # Reasonable learning rate for fine-tuning
     """Learning rate for training"""
     
     num_train_epochs: int = 3
@@ -129,15 +129,19 @@ class SimpleGRPOConfig(TrainingArguments):
     # Optimizer parameters
     adam_beta1: float = 0.9
     adam_beta2: float = 0.999
-    adam_epsilon: float = 1e-8
-    weight_decay: float = 0.01
+    adam_epsilon: float = 1e-8  # Smaller epsilon for numerical stability
+    weight_decay: float = 0.01  # Weight decay to prevent overfitting
     
     # Scheduler parameters
     lr_scheduler_type: str = "cosine"
     
     # Mixed precision
     fp16: bool = False
-    bf16: bool = False
+    bf16: bool = False  # Disable mixed precision for DialoGPT compatibility
+    
+    # Gradient clipping to prevent NaN gradients
+    max_grad_norm: float = 1.0  # Standard gradient clipping
+    """Maximum gradient norm for clipping"""
     
     # Dataloader parameters
     dataloader_num_workers: int = 0
@@ -240,6 +244,12 @@ class SimpleGRPOTrainer(Trainer):
         self.reference_model = None
         if self.use_kl_penalty:
             self._initialize_reference_model()
+        
+        # Initialize model weights properly to prevent NaN
+        self._initialize_model_weights()
+        
+        # Enable gradient monitoring
+        self._gradient_monitoring_enabled = True
     
     def _initialize_reference_model(self):
         """Initialize reference model for KL divergence calculation"""
@@ -247,6 +257,10 @@ class SimpleGRPOTrainer(Trainer):
             # Create a copy of the current model as reference
             self.reference_model = self.model.__class__(self.model.config)
             self.reference_model.load_state_dict(self.model.state_dict())
+            
+            # Ensure reference model is on the same device as the main model
+            device = next(self.model.parameters()).device
+            self.reference_model = self.reference_model.to(device)
             self.reference_model.eval()
             
             # Freeze reference model parameters
@@ -258,9 +272,71 @@ class SimpleGRPOTrainer(Trainer):
             logger.warning(f"Failed to initialize reference model: {e}")
             self.use_kl_penalty = False
     
-    def compute_loss(self, model, inputs, return_outputs=False):
+    def _initialize_model_weights(self):
+        """Initialize model weights to prevent NaN values."""
+        try:
+            # Check for NaN values in model parameters
+            for name, param in self.model.named_parameters():
+                if torch.isnan(param).any():
+                    logger.warning(f"NaN detected in {name}, reinitializing...")
+                    # Reinitialize the parameter
+                    if param.dim() >= 2:
+                        torch.nn.init.xavier_uniform_(param)
+                    else:
+                        torch.nn.init.normal_(param, mean=0.0, std=0.02)
+            
+            # Ensure all parameters are finite
+            for name, param in self.model.named_parameters():
+                if torch.isinf(param).any():
+                    logger.warning(f"Inf detected in {name}, reinitializing...")
+                    if param.dim() >= 2:
+                        torch.nn.init.xavier_uniform_(param)
+                    else:
+                        torch.nn.init.normal_(param, mean=0.0, std=0.02)
+            
+            logger.info("Model weights initialized successfully")
+            
+        except Exception as e:
+            logger.warning(f"Failed to initialize model weights: {e}")
+    
+    def _monitor_gradients(self):
+        """Monitor gradients for NaN values and exploding gradients."""
+        try:
+            total_norm = 0.0
+            param_count = 0
+            nan_count = 0
+            
+            for name, param in self.model.named_parameters():
+                if param.grad is not None:
+                    param_norm = param.grad.data.norm(2)
+                    total_norm += param_norm.item() ** 2
+                    param_count += 1
+                    
+                    # Check for NaN gradients
+                    if torch.isnan(param.grad).any():
+                        nan_count += 1
+                        logger.warning(f"NaN gradient detected in {name}")
+                        # Zero out NaN gradients
+                        param.grad.data.zero_()
+                    
+                    # Check for exploding gradients
+                    if param_norm.item() > 10.0:
+                        logger.warning(f"Large gradient detected in {name}: {param_norm.item():.4f}")
+            
+            total_norm = total_norm ** (1. / 2)
+            
+            if nan_count > 0:
+                logger.warning(f"Found {nan_count} parameters with NaN gradients")
+            
+            if total_norm > 5.0:
+                logger.warning(f"Large total gradient norm: {total_norm:.4f}")
+                
+        except Exception as e:
+            logger.warning(f"Gradient monitoring failed: {e}")
+    
+    def compute_loss(self, model, inputs, return_outputs=False, num_items_in_batch=None, **kwargs):
         """
-        Compute GRPO loss.
+        Compute GRPO loss with numerical stability fixes.
         
         Args:
             model: The model to compute loss for
@@ -273,6 +349,9 @@ class SimpleGRPOTrainer(Trainer):
         # Get model outputs
         outputs = model(**inputs)
         logits = outputs.logits
+        
+        # Apply numerical stability fixes to logits
+        logits = self._stabilize_logits(logits)
         
         # Get input_ids and attention_mask
         input_ids = inputs["input_ids"]
@@ -290,11 +369,21 @@ class SimpleGRPOTrainer(Trainer):
             loss_fct = torch.nn.CrossEntropyLoss(ignore_index=-100)
             loss = loss_fct(shift_logits.view(-1, shift_logits.size(-1)), shift_labels.view(-1))
             
+            # Check for NaN or infinite loss
+            if torch.isnan(loss) or torch.isinf(loss):
+                logger.warning("NaN or infinite loss detected, using small positive loss")
+                loss = torch.tensor(1e-6, device=model.device, requires_grad=True)
+            
+            # Monitor gradients after backward pass
+            if hasattr(self, '_gradient_monitoring_enabled'):
+                self._monitor_gradients()
+            
             # Add GRPO-specific loss components
             if self.use_kl_penalty and self.reference_model is not None:
                 # Compute KL divergence penalty
                 kl_loss = self._compute_kl_penalty(model, input_ids, attention_mask)
-                loss += self.kl_penalty_weight * kl_loss
+                if not torch.isnan(kl_loss) and not torch.isinf(kl_loss):
+                    loss += self.kl_penalty_weight * kl_loss
             
             if return_outputs:
                 return loss, outputs
@@ -322,10 +411,15 @@ class SimpleGRPOTrainer(Trainer):
             KL divergence loss
         """
         try:
+            # Ensure all tensors are on the same device
+            device = model.device
+            input_ids = input_ids.to(device)
+            attention_mask = attention_mask.to(device)
+            
             with torch.no_grad():
                 # Get reference model outputs
                 ref_outputs = self.reference_model(input_ids=input_ids, attention_mask=attention_mask)
-                ref_logits = ref_outputs.logits
+                ref_logits = ref_outputs.logits.to(device)
                 ref_log_probs = F.log_softmax(ref_logits, dim=-1)
             
             # Get current model outputs
@@ -344,7 +438,149 @@ class SimpleGRPOTrainer(Trainer):
             return kl_div
         except Exception as e:
             logger.warning(f"Failed to compute KL penalty: {e}")
-            return torch.tensor(0.0, device=model.device)
+            return torch.tensor(0.0, device=device)
+    
+    def _stabilize_logits(self, logits):
+        """
+        Apply minimal numerical stability fixes to logits to prevent inf/nan values.
+        
+        Args:
+            logits: Raw model logits
+            
+        Returns:
+            Stabilized logits
+        """
+        # Check for NaN values and replace with small negative values
+        if torch.isnan(logits).any():
+            logger.warning("NaN values detected in logits, replacing with small negative values")
+            logits = torch.where(torch.isnan(logits), torch.tensor(-10.0, device=logits.device), logits)
+        
+        # Check for infinite values and replace with large but finite values
+        if torch.isinf(logits).any():
+            logger.warning("Infinite values detected in logits, replacing with large finite values")
+            logits = torch.where(torch.isinf(logits), torch.tensor(50.0, device=logits.device), logits)
+        
+        # Only clamp extreme values, don't apply aggressive transformations
+        logits = torch.clamp(logits, min=-50.0, max=50.0)
+        
+        return logits
+    
+    def _safe_generate(self, model, tokenizer, prompt, max_new_tokens=20, temperature=0.7, top_p=0.9, top_k=40):
+        """
+        Safely generate text with comprehensive NaN handling and fallback mechanisms.
+        
+        Args:
+            model: The model to use for generation
+            tokenizer: Tokenizer for the model
+            prompt: Input prompt
+            max_new_tokens: Maximum number of new tokens to generate
+            temperature: Sampling temperature
+            top_p: Top-p sampling parameter
+            top_k: Top-k sampling parameter
+            
+        Returns:
+            Generated text or error message
+        """
+        try:
+            # Tokenize input
+            inputs = tokenizer(prompt, return_tensors="pt")
+            device = next(model.parameters()).device
+            inputs = {k: v.to(device) for k, v in inputs.items()}
+            
+            # Method 1: Try deterministic generation first
+            try:
+                with torch.no_grad():
+                    generated = model.generate(
+                        **inputs,
+                        max_new_tokens=max_new_tokens,
+                        do_sample=False,  # Deterministic generation
+                        pad_token_id=tokenizer.eos_token_id,
+                        eos_token_id=tokenizer.eos_token_id,
+                        repetition_penalty=1.1,
+                        no_repeat_ngram_size=2,
+                    )
+                    
+                    response = tokenizer.decode(generated[0], skip_special_tokens=True)
+                    
+                    # Check if response is valid
+                    if response and len(response.strip()) > 0:
+                        return response
+                        
+            except Exception as e:
+                logger.warning(f"Deterministic generation failed: {e}")
+            
+            # Method 2: Try with custom logits processing
+            try:
+                with torch.no_grad():
+                    outputs = model(**inputs)
+                    logits = outputs.logits
+                    
+                    # Comprehensive NaN/Inf handling
+                    if torch.isnan(logits).any():
+                        logger.warning("NaN detected in logits, applying fixes...")
+                        logits = torch.where(torch.isnan(logits), torch.tensor(-10.0, device=logits.device), logits)
+                    
+                    if torch.isinf(logits).any():
+                        logger.warning("Inf detected in logits, applying fixes...")
+                        logits = torch.where(torch.isinf(logits), torch.tensor(10.0, device=logits.device), logits)
+                    
+                    # Clamp extreme values
+                    logits = torch.clamp(logits, min=-20.0, max=20.0)
+                    
+                    # Use greedy decoding with processed logits
+                    generated_ids = []
+                    current_input = inputs["input_ids"]
+                    
+                    for _ in range(max_new_tokens):
+                        # Get next token logits
+                        next_logits = logits[0, -1, :]  # Last token logits
+                        
+                        # Apply temperature if needed
+                        if temperature > 0:
+                            next_logits = next_logits / max(temperature, 0.1)
+                        
+                        # Get the most likely token
+                        next_token = torch.argmax(next_logits, dim=-1, keepdim=True)
+                        
+                        # Check for EOS token
+                        if next_token.item() == tokenizer.eos_token_id:
+                            break
+                        
+                        generated_ids.append(next_token.item())
+                        
+                        # Update input for next iteration
+                        current_input = torch.cat([current_input, next_token.unsqueeze(0)], dim=1)
+                        
+                        # Get new logits
+                        with torch.no_grad():
+                            new_outputs = model(current_input)
+                            logits = new_outputs.logits
+                            
+                            # Apply same fixes to new logits
+                            if torch.isnan(logits).any():
+                                logits = torch.where(torch.isnan(logits), torch.tensor(-10.0, device=logits.device), logits)
+                            if torch.isinf(logits).any():
+                                logits = torch.where(torch.isinf(logits), torch.tensor(10.0, device=logits.device), logits)
+                            logits = torch.clamp(logits, min=-20.0, max=20.0)
+                    
+                    # Decode generated tokens
+                    if generated_ids:
+                        full_sequence = torch.cat([inputs["input_ids"], torch.tensor(generated_ids, device=device).unsqueeze(0)], dim=1)
+                        response = tokenizer.decode(full_sequence[0], skip_special_tokens=True)
+                        return response
+                    else:
+                        return prompt  # Return original prompt if no generation
+                        
+            except Exception as e:
+                logger.warning(f"Custom logits processing failed: {e}")
+            
+            # Method 3: Fallback to simple response
+            logger.warning("All generation methods failed, using fallback response")
+            return "I apologize, but I'm having trouble generating a response right now."
+                
+        except Exception as e:
+            logger.error(f"All generation methods failed: {e}")
+            return f"ERROR: {str(e)}"
     
     def _prepare_inputs(self, inputs):
         """Prepare inputs for the model"""

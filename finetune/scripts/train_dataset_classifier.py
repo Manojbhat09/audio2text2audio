@@ -19,6 +19,10 @@ from pathlib import Path
 # Enable synchronous CUDA execution for better debugging
 os.environ['CUDA_LAUNCH_BLOCKING'] = '1'
 
+# Enable PyTorch anomaly detection to catch NaN values
+import torch
+torch.autograd.set_detect_anomaly(True)
+
 # Add src to path
 sys.path.append(str(Path(__file__).parent.parent))
 
@@ -42,7 +46,7 @@ def parse_args():
     parser = argparse.ArgumentParser(description="Train dataset classifier with GRPO")
     
     # Model configuration
-    parser.add_argument("--model-name", type=str, default="unsloth/gemma-3-270m-it",
+    parser.add_argument("--model-name", type=str, default="gpt2",
                        help="Model name to use")
     parser.add_argument("--max-seq-length", type=int, default=1024,
                        help="Maximum sequence length")

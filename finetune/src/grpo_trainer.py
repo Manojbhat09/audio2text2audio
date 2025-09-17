@@ -87,6 +87,14 @@ class EarlyStoppingCallback:
         """Called when model is saved."""
         return control
     
+    def on_pre_optimizer_step(self, args, state, control, **kwargs):
+        """Called before the optimizer step."""
+        return control
+    
+    def on_optimizer_step(self, args, state, control, **kwargs):
+        """Called after the optimizer step."""
+        return control
+    
     def on_train_end(self, args, state, control, **kwargs):
         """Called at the end of training."""
         if self.should_stop:
@@ -141,9 +149,10 @@ class DatasetClassificationTrainer:
             # Load model
             self.model = AutoModelForCausalLM.from_pretrained(
                 self.config.model_name,
-                torch_dtype=torch.float16,
+                torch_dtype=torch.float32,  # Use float32 for DialoGPT compatibility
                 device_map="auto",
-                trust_remote_code=True
+                trust_remote_code=True,
+                attn_implementation="eager"  # Use eager attention to prevent NaN
             )
             
             logger.info("✓ Model and tokenizer loaded successfully")
@@ -344,6 +353,11 @@ class DatasetClassificationTrainer:
             
             # Create GRPO configuration
             grpo_config = self._create_grpo_config()
+            
+            # Disable evaluation and wandb for now to focus on training
+            grpo_config.eval_strategy = "no"
+            grpo_config.eval_steps = None
+            grpo_config.report_to = []  # Disable all reporting
             
             # Create reward functions
             reward_funcs = self._create_reward_functions()
