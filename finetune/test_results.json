@@ -1,0 +1,80 @@
+{
+  "test_results": {
+    "predictions": [
+      "ifeval",
+      "commoneval",
+      "commoneval",
+      "commoneval",
+      "commoneval",
+      "commoneval",
+      "ifeval",
+      "ifeval",
+      "wildvoice",
+      "commoneval"
+    ],
+    "ground_truth": [
+      "ifeval",
+      "commoneval",
+      "wildvoice",
+      "ifeval",
+      "commoneval",
+      "wildvoice",
+      "ifeval",
+      "commoneval",
+      "wildvoice",
+      "ifeval"
+    ],
+    "confidence_scores": [
+      1.0,
+      1.0,
+      1.0,
+      0.0,
+      1.0,
+      1.0,
+      1.0,
+      1.0,
+      1.0,
+      0.0
+    ],
+    "test_prompts": [
+      "Classify this audio transcript as one of these datasets: ifeval, commoneval, wildvoice. Transcript: This is a test audio for ifeval dataset with instruction following tasks.",
+      "Classify this audio transcript as one of these datasets: ifeval, commoneval, wildvoice. Transcript: This is a common evaluation task for language understanding.",
+      "Classify this audio transcript as one of these datasets: ifeval, commoneval, wildvoice. Transcript: This is a wild voice sample with natural speech patterns.",
+      "Classify this audio transcript as one of these datasets: ifeval, commoneval, wildvoice. Transcript: Instruction following evaluation with complex reasoning tasks.",
+      "Classify this audio transcript as one of these datasets: ifeval, commoneval, wildvoice. Transcript: Common evaluation benchmark for natural language processing.",
+      "Classify this audio transcript as one of these datasets: ifeval, commoneval, wildvoice. Transcript: Wild voice data with diverse speaking styles and accents.",
+      "Classify this audio transcript as one of these datasets: ifeval, commoneval, wildvoice. Transcript: IfEval dataset containing instruction following examples.",
+      "Classify this audio transcript as one of these datasets: ifeval, commoneval, wildvoice. Transcript: CommonEval benchmark for evaluating language models.",
+      "Classify this audio transcript as one of these datasets: ifeval, commoneval, wildvoice. Transcript: WildVoice dataset with natural conversational speech.",
+      "Classify this audio transcript as one of these datasets: ifeval, commoneval, wildvoice. Transcript: Instruction following evaluation with step-by-step reasoning."
+    ]
+  },
+  "metrics": {
+    "overall_accuracy": 0.5,
+    "dataset_accuracy": {
+      "commoneval": 0.6666666666666666,
+      "ifeval": 0.5,
+      "wildvoice": 0.3333333333333333
+    },
+    "average_confidence": 0.8,
+    "total_samples": 10,
+    "correct_predictions": 5,
+    "confusion_matrix": {
+      "commoneval": {
+        "commoneval": 2,
+        "ifeval": 1,
+        "wildvoice": 0
+      },
+      "ifeval": {
+        "commoneval": 2,
+        "ifeval": 2,
+        "wildvoice": 0
+      },
+      "wildvoice": {
+        "commoneval": 2,
+        "ifeval": 0,
+        "wildvoice": 1
+      }
+    }
+  }
+}
