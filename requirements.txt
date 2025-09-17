@@ -1,0 +1,13 @@
+imagebind @ git+https://github.com/facebookresearch/ImageBind.git@c3c3b2e1ce6fd850ff42ce0375823fe22880a7cc#egg=imagebind
+accelerate==1.2.1
+datasets==3.1.0
+docker==7.1.0
+hf_transfer==0.1.9
+
+librosa==0.10.2.post1
+# For numerical operations
+numpy
+scipy
+
+# Required for some evaluation metrics
+scikit-learn>=1.3.2

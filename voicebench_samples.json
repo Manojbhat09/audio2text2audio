@@ -1,0 +1,102 @@
+[
+  {
+    "prompt": "What is the capital of France?",
+    "output": "The capital of France is Paris.",
+    "index": 0,
+    "audio_info": {
+      "sampling_rate": 16000,
+      "length": 28799,
+      "duration": 1.7999375
+    }
+  },
+  {
+    "prompt": "Explain the concept of photosynthesis.",
+    "output": "Photosynthesis is the process by which plants convert light energy into chemical energy, using carbon dioxide and water to produce glucose and oxygen.",
+    "index": 1,
+    "audio_info": {
+      "sampling_rate": 16000,
+      "length": 24000,
+      "duration": 1.5
+    }
+  },
+  {
+    "prompt": "What are the main causes of climate change?",
+    "output": "The main causes of climate change include greenhouse gas emissions from burning fossil fuels, deforestation, industrial processes, and agricultural activities.",
+    "index": 2,
+    "audio_info": {
+      "sampling_rate": 16000,
+      "length": 38400,
+      "duration": 2.4
+    }
+  },
+  {
+    "prompt": "Describe the water cycle.",
+    "output": "The water cycle is the continuous movement of water through evaporation, condensation, precipitation, and collection processes on Earth.",
+    "index": 3,
+    "audio_info": {
+      "sampling_rate": 16000,
+      "length": 19200,
+      "duration": 1.2
+    }
+  },
+  {
+    "prompt": "What is the difference between renewable and non-renewable energy?",
+    "output": "Renewable energy comes from sources that naturally replenish, like solar and wind, while non-renewable energy comes from finite sources like fossil fuels.",
+    "index": 4,
+    "audio_info": {
+      "sampling_rate": 16000,
+      "length": 43199,
+      "duration": 2.6999375
+    }
+  },
+  {
+    "prompt": "Explain the theory of evolution.",
+    "output": "The theory of evolution explains how species change over time through natural selection, genetic variation, and adaptation to environmental pressures.",
+    "index": 5,
+    "audio_info": {
+      "sampling_rate": 16000,
+      "length": 24000,
+      "duration": 1.5
+    }
+  },
+  {
+    "prompt": "What is artificial intelligence?",
+    "output": "Artificial intelligence is the simulation of human intelligence in machines, enabling them to perform tasks that typically require human cognitive abilities.",
+    "index": 6,
+    "audio_info": {
+      "sampling_rate": 16000,
+      "length": 19200,
+      "duration": 1.2
+    }
+  },
+  {
+    "prompt": "Describe the structure of DNA.",
+    "output": "DNA is a double helix structure made of nucleotides containing phosphate, sugar, and nitrogenous bases (A, T, G, C) that carries genetic information.",
+    "index": 7,
+    "audio_info": {
+      "sampling_rate": 16000,
+      "length": 24000,
+      "duration": 1.5
+    }
+  },
+  {
+    "prompt": "What are the benefits of exercise?",
+    "output": "Exercise provides numerous benefits including improved cardiovascular health, stronger muscles and bones, better mental health, and increased longevity.",
+    "index": 8,
+    "audio_info": {
+      "sampling_rate": 16000,
+      "length": 28799,
+      "duration": 1.7999375
+    }
+  },
+  {
+    "prompt": "Explain the greenhouse effect.",
+    "output": "The greenhouse effect is the process where greenhouse gases in the atmosphere trap heat from the sun, warming the Earth's surface and maintaining habitable temperatures.",
+    "index": 9,
+    "audio_info": {
+      "sampling_rate": 16000,
+      "length": 19200,
+      "duration": 1.2
+    }
+  }
+]
