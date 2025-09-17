@@ -24,7 +24,7 @@ class TrainingConfig:
     max_audio_duration: float = 30.0  # seconds
     
     # Model settings
-    model_name: str = "unsloth/gemma-3-270m-it"
+    model_name: str = "google/gemma-2-2b-it"
     max_seq_length: int = 1024
     max_prompt_length: int = 256
     max_completion_length: int = 64
@@ -57,8 +57,19 @@ class TrainingConfig:
     patience: int = 10
     min_delta: float = 0.01
     
+    # Wandb settings
+    use_wandb: bool = True
+    wandb_project: str = "grpo-dataset-classification"
+    wandb_entity: str = None
+    wandb_name: str = None
+    wandb_tags: List[str] = None
+    wandb_log_model: bool = True
+    wandb_log_predictions: bool = True
+    wandb_log_audio: bool = True
+    wandb_log_samples: int = 10
+    
     # Paths
-    whisper_model_path: str = "/home/mbhat/omegalabs-anytoany-bittensor/elephant-04/models/wpt/wpt.pt"
+    whisper_model_path: str = "/home/mbhat/alien-invasion-r3-05/models/wpt/wpt.pt"
     output_dir: str = "/home/mbhat/omegalabs-anytoany-bittensor/finetune/outputs"
     data_dir: str = "/home/mbhat/omegalabs-anytoany-bittensor/finetune/data"
     model_dir: str = "/home/mbhat/omegalabs-anytoany-bittensor/finetune/models"

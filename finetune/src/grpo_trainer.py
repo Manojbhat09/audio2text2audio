@@ -18,12 +18,14 @@ from dataclasses import asdict
 import torch
 from datasets import Dataset
 from transformers import TrainingArguments
-from trl import GRPOConfig, GRPOTrainer
-from unsloth import FastModel
+from .simple_grpo_trainer import SimpleGRPOConfig as GRPOConfig, SimpleGRPOTrainer as GRPOTrainer
+# from unsloth import FastModel  # Temporarily disabled due to compatibility issues
 
 from .whisper_transcriber import WhisperTranscriber
 from .dataset_loader import OnlineDatasetLoader, TrainingSample
 from .reward_functions import create_reward_functions
+from .wandb_integration import WandbLogger
+from .accelerate_compatibility import apply_compatibility_patches
 from configs.training_config import TrainingConfig
 
 logger = logging.getLogger(__name__)
@@ -39,9 +41,30 @@ class EarlyStoppingCallback:
         self.patience_counter = 0
         self.should_stop = False
     
-    def on_log(self, logs: Dict[str, float]) -> Dict[str, Any]:
+    def on_train_begin(self, args, state, control, **kwargs):
+        """Called at the beginning of training."""
+        logger.info(f"Early stopping callback initialized with patience={self.patience}")
+        return control
+    
+    def on_epoch_begin(self, args, state, control, **kwargs):
+        """Called at the beginning of each epoch."""
+        return control
+    
+    def on_epoch_end(self, args, state, control, **kwargs):
+        """Called at the end of each epoch."""
+        return control
+    
+    def on_step_begin(self, args, state, control, **kwargs):
+        """Called at the beginning of each step."""
+        return control
+    
+    def on_step_end(self, args, state, control, **kwargs):
+        """Called at the end of each step."""
+        return control
+    
+    def on_log(self, args, state, control, logs=None, **kwargs):
         """Called when metrics are logged."""
-        if 'reward' in logs:
+        if logs and 'reward' in logs:
             current_metric = logs['reward']
             
             # Check if we have improvement
@@ -56,21 +79,17 @@ class EarlyStoppingCallback:
                 if self.patience_counter >= self.patience:
                     logger.info(f"Early stopping triggered after {self.patience_counter} steps without improvement")
                     self.should_stop = True
-                    return {"should_stop": True}
+                    control.should_training_stop = True
         
-        return {}
+        return control
     
-    def on_train_begin(self, logs: Dict[str, Any]):
-        """Called at the beginning of training."""
-        logger.info("Starting training with early stopping callback")
-        self.should_stop = False
-    
-    def on_train_end(self, logs: Dict[str, Any]):
+    def on_train_end(self, args, state, control, **kwargs):
         """Called at the end of training."""
         if self.should_stop:
             logger.info("Training stopped early due to no improvement")
         else:
             logger.info("Training completed normally")
+        return control
 
 
 class DatasetClassificationTrainer:
@@ -83,6 +102,9 @@ class DatasetClassificationTrainer:
         Args:
             config: Training configuration
         """
+        # Apply compatibility patches first
+        apply_compatibility_patches()
+        
         self.config = config
         self.model = None
         self.tokenizer = None
@@ -93,36 +115,31 @@ class DatasetClassificationTrainer:
         self.best_score = 0.0
         self.training_history = []
         
+        # Setup wandb logging
+        self.wandb_logger = WandbLogger(config)
+        
         # Initialize components
         self._setup_model()
         self._setup_transcriber()
         self._setup_dataset_loader()
     
     def _setup_model(self):
-        """Setup Unsloth model and tokenizer."""
+        """Setup model and tokenizer using standard transformers."""
         try:
             logger.info(f"Loading model: {self.config.model_name}")
+            from transformers import AutoModelForCausalLM, AutoTokenizer
             
-            self.model, self.tokenizer = FastModel.from_pretrained(
-                model_name=self.config.model_name,
-                max_seq_length=self.config.max_seq_length,
-                load_in_4bit=False,
-                load_in_8bit=False,
-                full_finetuning=False,
-            )
+            # Load tokenizer
+            self.tokenizer = AutoTokenizer.from_pretrained(self.config.model_name)
+            if self.tokenizer.pad_token is None:
+                self.tokenizer.pad_token = self.tokenizer.eos_token
             
-            # Add LoRA adapters
-            self.model = FastModel.get_peft_model(
-                self.model,
-                finetune_vision_layers=False,
-                finetune_language_layers=True,
-                finetune_attention_modules=True,
-                finetune_mlp_modules=True,
-                r=self.config.lora_r,
-                lora_alpha=self.config.lora_alpha,
-                lora_dropout=self.config.lora_dropout,
-                bias=self.config.lora_bias,
-                random_state=self.config.random_seed,
+            # Load model
+            self.model = AutoModelForCausalLM.from_pretrained(
+                self.config.model_name,
+                torch_dtype=torch.float16,
+                device_map="auto",
+                trust_remote_code=True
             )
             
             logger.info("✓ Model and tokenizer loaded successfully")
@@ -151,23 +168,135 @@ class DatasetClassificationTrainer:
         if len(samples) == 0:
             raise RuntimeError("No training samples generated")
         
-        # Convert to HuggingFace dataset format
+        # Convert to HuggingFace dataset format with proper tokenization
+        prompts = [str(sample.prompt) for sample in samples]
+        answers = [str(sample.answer) for sample in samples]
+        
+        # Tokenize prompts and answers
+        prompt_encodings = self.tokenizer(
+            prompts,
+            truncation=True,
+            padding=True,
+            max_length=self.config.max_prompt_length,
+            return_tensors="pt"
+        )
+        
+        answer_encodings = self.tokenizer(
+            answers,
+            truncation=True,
+            padding=True,
+            max_length=self.config.max_completion_length,
+            return_tensors="pt"
+        )
+        
+        # Create dataset with tokenized inputs (only training fields)
+        # For language modeling, we need to concatenate prompt and answer
+        # and create proper labels with -100 for prompt tokens
+        input_ids_list = []
+        attention_mask_list = []
+        labels_list = []
+        
+        for i in range(len(samples)):
+            # Concatenate prompt and answer
+            prompt_ids = prompt_encodings["input_ids"][i]
+            answer_ids = answer_encodings["input_ids"][i]
+            
+            # Remove padding tokens
+            prompt_ids = prompt_ids[prompt_ids != self.tokenizer.pad_token_id]
+            answer_ids = answer_ids[answer_ids != self.tokenizer.pad_token_id]
+            
+            # Concatenate prompt and answer
+            full_input_ids = torch.cat([prompt_ids, answer_ids])
+            
+            # Create labels: -100 for prompt tokens, actual tokens for answer
+            labels = torch.full_like(full_input_ids, -100)
+            labels[len(prompt_ids):] = answer_ids
+            
+            # Create attention mask
+            attention_mask = torch.ones_like(full_input_ids)
+            
+            input_ids_list.append(full_input_ids)
+            attention_mask_list.append(attention_mask)
+            labels_list.append(labels)
+        
+        # Pad sequences to same length
+        max_length = max(len(ids) for ids in input_ids_list)
+        
+        padded_input_ids = []
+        padded_attention_mask = []
+        padded_labels = []
+        
+        for i in range(len(input_ids_list)):
+            # Pad input_ids
+            pad_length = max_length - len(input_ids_list[i])
+            padded_input = torch.cat([
+                input_ids_list[i], 
+                torch.full((pad_length,), self.tokenizer.pad_token_id, dtype=input_ids_list[i].dtype)
+            ])
+            padded_input_ids.append(padded_input)
+            
+            # Pad attention_mask
+            padded_attn = torch.cat([
+                attention_mask_list[i],
+                torch.zeros(pad_length, dtype=attention_mask_list[i].dtype)
+            ])
+            padded_attention_mask.append(padded_attn)
+            
+            # Pad labels
+            padded_label = torch.cat([
+                labels_list[i],
+                torch.full((pad_length,), -100, dtype=labels_list[i].dtype)
+            ])
+            padded_labels.append(padded_label)
+        
         dataset_dict = {
-            "prompt": [sample.prompt for sample in samples],
-            "answer": [sample.answer for sample in samples]
+            "input_ids": torch.stack(padded_input_ids),
+            "attention_mask": torch.stack(padded_attention_mask),
+            "labels": torch.stack(padded_labels)
         }
         
-        # Add metadata for analysis
-        for key in ["dataset_name", "transcript", "transcript_length"]:
-            dataset_dict[key] = [sample.metadata[key] for sample in samples]
-        
         dataset = Dataset.from_dict(dataset_dict)
+        
+        # Store metadata separately for analysis
+        metadata = {
+            "dataset_name": [sample.metadata["dataset_name"] for sample in samples],
+            "transcript": [sample.metadata["transcript"] for sample in samples],
+            "transcript_length": [sample.metadata["transcript_length"] for sample in samples]
+        }
         logger.info(f"Created dataset with {len(dataset)} samples")
         
         # Log dataset distribution
         from collections import Counter
-        distribution = Counter(dataset["dataset_name"])
+        distribution = Counter(metadata["dataset_name"])
         logger.info(f"Dataset distribution: {dict(distribution)}")
+        
+        # Log audio samples to wandb
+        audio_samples = []
+        for i, sample in enumerate(samples[:self.config.wandb_log_samples]):
+            if hasattr(sample, 'metadata') and 'audio' in sample.metadata:
+                audio_samples.append({
+                    'audio': sample.metadata['audio'],
+                    'transcript': sample.metadata.get('transcript', ''),
+                    'dataset_name': sample.metadata.get('dataset_name', 'unknown'),
+                })
+        
+        if audio_samples:
+            self.wandb_logger.log_audio_samples(audio_samples)
+        
+        # Log sample predictions
+        sample_predictions = []
+        for i, sample in enumerate(samples[:self.config.wandb_log_samples]):
+            sample_predictions.append({
+                'dataset_name': sample.metadata.get('dataset_name', 'unknown'),
+                'prompt': sample.prompt[:200],
+                'prediction': sample.answer[:200],
+                'ground_truth': sample.metadata.get('transcript', '')[:200],
+                'reward': 0.0,  # Will be calculated during training
+                'accuracy': 0.0,  # Will be calculated during training
+            })
+        
+        if sample_predictions:
+            self.wandb_logger.log_predictions(sample_predictions)
         
         return dataset
     
@@ -189,8 +318,11 @@ class DatasetClassificationTrainer:
             max_completion_length=self.config.max_completion_length,
             max_steps=self.config.max_steps,
             save_steps=self.config.save_steps,
+            eval_steps=self.config.save_steps,
+            eval_strategy="steps",
+            load_best_model_at_end=False,
             max_grad_norm=self.config.max_grad_norm,
-            report_to="none",
+            report_to=["wandb"] if self.config.use_wandb else "none",
             output_dir=self.config.output_dir,
             remove_unused_columns=False,
             dataloader_drop_last=False,
@@ -215,10 +347,10 @@ class DatasetClassificationTrainer:
             # Create trainer
             self.trainer = GRPOTrainer(
                 model=self.model,
-                processing_class=self.tokenizer,
-                reward_funcs=reward_funcs,
+                tokenizer=self.tokenizer,
                 args=grpo_config,
                 train_dataset=train_dataset,
+                optimizers=(None, None),  # Provide default optimizers
             )
             
             # Add early stopping callback
@@ -228,17 +360,34 @@ class DatasetClassificationTrainer:
             )
             self.trainer.add_callback(early_stopping)
             
+            # Log model architecture to wandb
+            self.wandb_logger.log_model_architecture(self.model)
+            
+            # Log dataset distribution
+            distribution = {}
+            for sample in train_dataset:
+                dataset_name = sample.get("dataset_name", "unknown")
+                distribution[dataset_name] = distribution.get(dataset_name, 0) + 1
+            self.wandb_logger.log_dataset_distribution(distribution)
+            
             # Save training configuration
             self._save_training_config()
             
             logger.info("Starting GRPO training...")
             start_time = time.time()
             
-            # Start training
-            self.trainer.train()
+            # Start training with wandb logging
+            self._train_with_wandb_logging()
             
             training_time = time.time() - start_time
             logger.info(f"Training completed in {training_time:.2f} seconds")
+            
+            # Log final metrics
+            self.wandb_logger.log_training_metrics({
+                "final_training_time": training_time,
+                "total_steps": self.step,
+                "best_score": self.best_score,
+            })
             
             # Save final model
             self.save_model()
@@ -250,6 +399,34 @@ class DatasetClassificationTrainer:
             
         except Exception as e:
             logger.error(f"Training failed: {e}")
+            raise
+        finally:
+            # Finish wandb run
+            self.wandb_logger.finish()
+    
+    def _train_with_wandb_logging(self):
+        """Custom training loop with comprehensive wandb logging."""
+        try:
+            # Start training
+            self.trainer.train()
+            
+            # Log training history
+            if hasattr(self.trainer, 'state') and hasattr(self.trainer.state, 'log_history'):
+                for log_entry in self.trainer.state.log_history:
+                    if 'train_loss' in log_entry:
+                        self.wandb_logger.log_training_metrics({
+                            'loss': log_entry['train_loss'],
+                            'learning_rate': log_entry.get('learning_rate', 0.0),
+                            'epoch': log_entry.get('epoch', 0.0),
+                        }, step=log_entry.get('step', 0))
+                    
+                    if 'eval_loss' in log_entry:
+                        self.wandb_logger.log_evaluation_metrics({
+                            'loss': log_entry['eval_loss'],
+                        }, step=log_entry.get('step', 0))
+            
+        except Exception as e:
+            logger.error(f"Training with wandb logging failed: {e}")
             raise
     
     def save_model(self):

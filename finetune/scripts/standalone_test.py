@@ -103,7 +103,7 @@ def test_whisper_model_exists():
     """Test if Whisper model file exists."""
     logger.info("Testing Whisper model file...")
     
-    model_path = "/home/mbhat/omegalabs-anytoany-bittensor/elephant-04/models/wpt/wpt.pt"
+    model_path = "/home/mbhat/alien-invasion-r3-05/models/wpt/wpt.pt"
     
     if Path(model_path).exists():
         logger.info(f"✓ Whisper model found at {model_path}")

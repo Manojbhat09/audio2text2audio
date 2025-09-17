@@ -43,8 +43,11 @@ class WhisperTranscriber:
             if not Path(self.model_path).exists():
                 raise FileNotFoundError(f"Whisper model not found at {self.model_path}")
             
-            # Load model
-            self.model = whisper.load_model(self.model_path, device=self.device)
+            # Load model using the correct API
+            import torch
+            self.model = whisper.load_model(self.model_path)
+            if torch.cuda.is_available() and self.device == "cuda":
+                self.model = self.model.cuda()
             logger.info("✓ Whisper model loaded successfully")
             
         except Exception as e:

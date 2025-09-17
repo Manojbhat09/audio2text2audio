@@ -4,6 +4,8 @@ Main Training Script for Dataset Classification
 
 Trains a Gemma model to classify VoiceBench datasets using GRPO reinforcement learning.
 This script handles the complete pipeline from data loading to model training.
+
+python scripts/train_dataset_classifier.py     --model-name microsoft/DialoGPT-small     --samples-per-dataset 200     --max-steps 200     --learning-rate 3e-6     --datasets ifeval commoneval wildvoice --verbose
 """
 
 from __future__ import annotations
@@ -63,7 +65,7 @@ def parse_args():
     
     # Paths
     parser.add_argument("--whisper-model-path", type=str,
-                       default="/home/mbhat/omegalabs-anytoany-bittensor/models/wpt/wpt.pt",
+                       default="/home/mbhat/omegalabs-anytoany-bittensor/elephant-04/models/wpt/wpt.pt",
                        help="Path to Whisper model")
     parser.add_argument("--output-dir", type=str,
                        default="/home/mbhat/omegalabs-anytoany-bittensor/finetune/outputs",
