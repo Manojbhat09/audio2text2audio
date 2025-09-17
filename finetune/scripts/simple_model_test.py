@@ -15,6 +15,9 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 import numpy as np
 from collections import Counter
 
+# Enable synchronous CUDA execution for better debugging
+os.environ['CUDA_LAUNCH_BLOCKING'] = '1'
+
 # Set up logging
 logging.basicConfig(
     level=logging.INFO,
@@ -92,27 +95,15 @@ class SimpleModelTester:
             prompt = f"Classify this audio transcript as one of these datasets: ifeval, commoneval, wildvoice. Transcript: {transcript}"
             
             try:
-                # Tokenize and generate
-                inputs = self.tokenizer(
-                    prompt,
-                    return_tensors="pt",
-                    truncation=True,
-                    max_length=512
-                ).to(self.model.device)
+                # Use safe generation method
+                full_response = self._safe_generate(prompt, max_new_tokens=30, temperature=0.1)
                 
-                # Generate prediction
-                with torch.no_grad():
-                    outputs = self.model.generate(
-                        **inputs,
-                        max_new_tokens=30,
-                        temperature=0.7,
-                        do_sample=True,
-                        pad_token_id=self.tokenizer.eos_token_id
-                    )
+                if full_response.startswith("ERROR"):
+                    logger.error(f"Generation failed: {full_response}")
+                    continue
                 
-                # Decode prediction
-                prediction = self.tokenizer.decode(outputs[0], skip_special_tokens=True)
-                prediction = prediction[len(prompt):].strip()
+                # Extract prediction (remove the prompt)
+                prediction = full_response[len(prompt):].strip()
                 
                 # Extract dataset name from prediction
                 predicted_dataset = self._extract_dataset_name(prediction)
@@ -166,6 +157,61 @@ class SimpleModelTester:
             return 1.0
         else:
             return 0.0
+    
+    def _safe_generate(self, prompt: str, max_new_tokens: int = 30, temperature: float = 0.7) -> str:
+        """
+        Safely generate text with numerical stability checks.
+        
+        Args:
+            prompt: Input prompt
+            max_new_tokens: Maximum number of new tokens to generate
+            temperature: Sampling temperature
+            
+        Returns:
+            Generated text or error message
+        """
+        try:
+            # Tokenize input
+            inputs = self.tokenizer(prompt, return_tensors="pt")
+            device = next(self.model.parameters()).device
+            inputs = {k: v.to(device) for k, v in inputs.items()}
+            
+            # Test forward pass first
+            with torch.no_grad():
+                outputs = self.model(**inputs)
+                logits = outputs.logits
+                
+                # Check for invalid values in logits
+                if torch.isnan(logits).any() or torch.isinf(logits).any():
+                    logger.warning("Invalid values detected in logits during generation")
+                    return "ERROR: Invalid model outputs"
+                
+                # Apply temperature scaling with clamping
+                if temperature > 0:
+                    logits = logits / max(temperature, 1e-8)  # Prevent division by zero
+                    logits = torch.clamp(logits, min=-50.0, max=50.0)
+                
+                # Generate with safer parameters
+                generated = self.model.generate(
+                    **inputs,
+                    max_new_tokens=max_new_tokens,
+                    temperature=max(temperature, 0.1),  # Minimum temperature of 0.1
+                    top_p=0.9,  # Clamp top_p
+                    top_k=40,   # Clamp top_k
+                    do_sample=True,
+                    pad_token_id=self.tokenizer.eos_token_id,
+                    eos_token_id=self.tokenizer.eos_token_id,
+                    repetition_penalty=1.1,  # Add repetition penalty
+                    no_repeat_ngram_size=2,  # Prevent repetition
+                )
+                
+                # Decode and return
+                response = self.tokenizer.decode(generated[0], skip_special_tokens=True)
+                return response
+                
+        except Exception as e:
+            logger.error(f"Generation failed: {e}")
+            return f"ERROR: {str(e)}"
     
     def calculate_metrics(self) -> dict:
         """Calculate performance metrics."""

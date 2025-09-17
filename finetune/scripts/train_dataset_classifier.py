@@ -13,7 +13,11 @@ from __future__ import annotations
 import sys
 import logging
 import argparse
+import os
 from pathlib import Path
+
+# Enable synchronous CUDA execution for better debugging
+os.environ['CUDA_LAUNCH_BLOCKING'] = '1'
 
 # Add src to path
 sys.path.append(str(Path(__file__).parent.parent))
