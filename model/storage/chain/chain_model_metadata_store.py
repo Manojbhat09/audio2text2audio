@@ -42,7 +42,7 @@ class ChainModelMetadataStore(ModelMetadataStore):
             self.subnet_uid,
             model_id.to_compressed_str(),
         )
-        utils.run_in_subprocess(partial, 60)
+        utils.run_in_subprocess(partial, 120)
 
     async def retrieve_model_metadata(self, hotkey: str) -> Optional[ModelMetadata]:
         """Retrieves model metadata on this subnet for specific hotkey"""

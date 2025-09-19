@@ -50,13 +50,13 @@ def get_config():
     parser.add_argument(
         "--epoch",
         type=str,
-        default=0,
+        default="0",
         help="The epoch number to load e.g. if you want to upload meta_model_0.pt, epoch should be 0",
     )
 
     parser.add_argument(
         "--netuid",
-        type=str,
+        type=int,
         default=constants.SUBNET_UID,
         help="The subnet UID.",
     )
@@ -109,7 +109,7 @@ async def main(config: bt.config):
 
     wallet = bt.wallet(config=config)
     subtensor = bt.subtensor(config=config)
-    bt.logging.debug("Subtensor network: ", subtensor.network)
+    print("Subtensor network: ", subtensor.network)
     metagraph: bt.metagraph = subtensor.metagraph(config.netuid)
 
     # Make sure we're registered and have a HuggingFace token.
@@ -123,7 +123,7 @@ async def main(config: bt.config):
         )
 
     repo_namespace, repo_name = utils.validate_hf_repo_id(config.hf_repo_id)
-    bt.logging.info(f"Repo namespace: {repo_namespace}, repo name: {repo_name}, competition id: {config.competition_id}")
+    print(f"Repo namespace: {repo_namespace}, repo name: {repo_name}, competition id: {config.competition_id}")
     model_id = ModelId(
         namespace=repo_namespace,
         name=repo_name,
@@ -136,11 +136,11 @@ async def main(config: bt.config):
     model = Model(id=model_id, local_repo_dir=config.model_dir)
    
 
-    bt.logging.info(f"Validated repo for {config.model_dir}")
+    print(f"Validated repo for {config.model_dir}")
 
     remote_model_store = HuggingFaceModelStore()
 
-    bt.logging.info(f"Uploading model to Hugging Face with id {model_id}")
+    print(f"Uploading model to Hugging Face with id {model_id}")
 
     model_id_with_commit = await remote_model_store.upload_model(
         model=model,
@@ -158,7 +158,7 @@ async def main(config: bt.config):
         competition_id=config.competition_id,
     )
     
-    bt.logging.info(
+    print(
         f"Model uploaded to Hugging Face with commit {model_id_with_hash.commit} and hash {model_id_with_hash.hash}"
     )
 
@@ -190,7 +190,7 @@ if __name__ == "__main__":
     # Parse and print configuration
     config = get_config()
     if config.list_competitions:
-        bt.logging.info(constants.COMPETITION_SCHEDULE)
+        print(constants.COMPETITION_SCHEDULE)
     else:
-        bt.logging.info(config)
+        print(config)
         asyncio.run(main(config))
