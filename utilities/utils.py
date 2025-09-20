@@ -100,6 +100,41 @@ def run_in_subprocess(func: functools.partial, ttl: int) -> Any:
     return result
 
 
+def run_in_subprocess_with_retry(func: functools.partial, ttl: int, max_retries: int = 3, retry_delay: int = 5) -> Any:
+    """Runs the provided function on a subprocess with retry logic for connection issues.
+
+    Args:
+        func (functools.partial): Function to be run.
+        ttl (int): How long to try for in seconds.
+        max_retries (int): Maximum number of retries for connection issues.
+        retry_delay (int): Delay between retries in seconds.
+
+    Returns:
+        Any: The value returned by 'func'
+    """
+    import time
+    import websockets.exceptions
+    
+    for attempt in range(max_retries + 1):
+        try:
+            return run_in_subprocess(func, ttl)
+        except (websockets.exceptions.ConnectionClosedError, 
+                websockets.exceptions.ConnectionClosedOK,
+                ConnectionError,
+                OSError) as e:
+            if attempt < max_retries:
+                bt.logging.warning(f"Connection error on attempt {attempt + 1}/{max_retries + 1}: {e}")
+                bt.logging.info(f"Retrying in {retry_delay} seconds...")
+                time.sleep(retry_delay)
+                continue
+            else:
+                bt.logging.error(f"All {max_retries + 1} attempts failed with connection error: {e}")
+                raise
+        except Exception as e:
+            # For non-connection errors, don't retry
+            raise
+
+
 def save_model(model, tokenizer, path: str, model_name: str):
     """Saves a model and tokenizer to a path.
 

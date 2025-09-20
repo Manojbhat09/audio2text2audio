@@ -42,7 +42,7 @@ class ChainModelMetadataStore(ModelMetadataStore):
             self.subnet_uid,
             model_id.to_compressed_str(),
         )
-        utils.run_in_subprocess(partial, 120)
+        utils.run_in_subprocess_with_retry(partial, 120, max_retries=3, retry_delay=10)
 
     async def retrieve_model_metadata(self, hotkey: str) -> Optional[ModelMetadata]:
         """Retrieves model metadata on this subnet for specific hotkey"""
@@ -52,7 +52,7 @@ class ChainModelMetadataStore(ModelMetadataStore):
             bt.extrinsics_subpackage.serving.get_metadata, self.subtensor, self.subnet_uid, hotkey
         )
 
-        metadata = utils.run_in_subprocess(partial, 60)
+        metadata = utils.run_in_subprocess_with_retry(partial, 60, max_retries=2, retry_delay=5)
 
         if not metadata:
             return None

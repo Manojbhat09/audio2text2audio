@@ -132,9 +132,10 @@ class CriticalRealVoiceBenchExperiment:
 
             responses = []
             for i, message in enumerate(messages):
+                # Use t2t endpoint for text-to-text multi-turn testing
                 response = requests.post(
-                    f"{self.api_url}/api/v1/v2t",
-                    json={"user_message": message},
+                    f"{self.api_url}/api/v1/t2t",
+                    json={"text_data": message},
                     timeout=60
                 )
 
@@ -145,9 +146,9 @@ class CriticalRealVoiceBenchExperiment:
                         'turn': i + 1,
                         'message': message,
                         'response': response_text,
-                        'current_turn': result.get('current_turn', 0),
-                        'max_turns': result.get('max_turns', 0),
-                        'turns_remaining': result.get('turns_remaining', 0)
+                        'current_turn': i + 1,  # Simulate turn counter
+                        'max_turns': max_turns,
+                        'turns_remaining': max_turns - (i + 1)
                     })
                 else:
                     responses.append({
@@ -186,7 +187,7 @@ class CriticalRealVoiceBenchExperiment:
             single_result = self.test_single_turn_response(sample['prompt'])
 
             if single_result['success']:
-                print(f"   ✅ Single-turn: {single_result['response'][:100]}...")
+                print(f"   ✅ Single-turn: {single_result['response']}...")
             else:
                 print(f"   ❌ Single-turn failed: {single_result['error']}")
 

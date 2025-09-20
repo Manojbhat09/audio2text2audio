@@ -167,8 +167,12 @@ async def main(config: bt.config):
     )
 
     # We can only commit to the chain every n minutes, so run this in a loop, until successful.
-    while True:
+    max_attempts = 5
+    attempt = 0
+    
+    while attempt < max_attempts:
         try:
+            print(f"Attempting to commit model to chain (attempt {attempt + 1}/{max_attempts})...")
             await model_metadata_store.store_model_metadata(
                 wallet.hotkey.ss58_address, model_id_with_hash
             )
@@ -177,13 +181,21 @@ async def main(config: bt.config):
                 private=False,
                 token=os.getenv("HF_ACCESS_TOKEN"),
             )
-            bt.logging.success("Committed model to the chain.")
+            print("✅ Successfully committed model to the chain.")
             break
         except Exception as e:
-            bt.logging.error(f"Failed to advertise model on the chain: {e}")
-            bt.logging.error("Retrying in 120 seconds...")
-            traceback.print_exc()
-            time.sleep(120)
+            attempt += 1
+            print(f"❌ Failed to advertise model on the chain (attempt {attempt}/{max_attempts}): {e}")
+            
+            if attempt < max_attempts:
+                retry_delay = min(120, 30 * attempt)  # Exponential backoff: 30s, 60s, 90s, 120s
+                print(f"Retrying in {retry_delay} seconds...")
+                time.sleep(retry_delay)
+            else:
+                print("❌ All attempts failed. Model was uploaded to Hugging Face but not advertised on chain.")
+                print("You can try running the script again later to advertise on chain.")
+                traceback.print_exc()
+                break
 
 
 if __name__ == "__main__":

@@ -87,6 +87,24 @@ class CriticalRealVoiceBenchExperiment:
             print(f"❌ Cannot connect to server: {e}")
             return False
 
+    def set_server_mode(self, mode: str) -> bool:
+        """Set server mode to single-turn or multi-turn."""
+        try:
+            response = requests.post(
+                f"{self.api_url}/api/v1/set_mode",
+                json={"mode": mode},
+                timeout=30
+            )
+            if response.status_code == 200:
+                print(f"✅ Server mode set to {mode.upper()}")
+                return True
+            else:
+                print(f"❌ Failed to set server mode: HTTP {response.status_code}")
+                return False
+        except Exception as e:
+            print(f"❌ Error setting server mode: {e}")
+            return False
+
     def test_single_turn_response(self, text: str) -> Dict[str, Any]:
         """Test single-turn response."""
         try:
@@ -132,9 +150,10 @@ class CriticalRealVoiceBenchExperiment:
 
             responses = []
             for i, message in enumerate(messages):
+                # Use t2t endpoint for text-to-text multi-turn testing
                 response = requests.post(
-                    f"{self.api_url}/api/v1/v2t",
-                    json={"user_message": message},
+                    f"{self.api_url}/api/v1/t2t",
+                    json={"text_data": message},
                     timeout=60
                 )
 
@@ -145,9 +164,9 @@ class CriticalRealVoiceBenchExperiment:
                         'turn': i + 1,
                         'message': message,
                         'response': response_text,
-                        'current_turn': result.get('current_turn', 0),
-                        'max_turns': result.get('max_turns', 0),
-                        'turns_remaining': result.get('turns_remaining', 0)
+                        'current_turn': i + 1,  # Simulate turn counter
+                        'max_turns': max_turns,
+                        'turns_remaining': max_turns - (i + 1)
                     })
                 else:
                     responses.append({
@@ -169,46 +188,122 @@ class CriticalRealVoiceBenchExperiment:
                 'error': str(e)
             }
 
-    def run_experiment_on_real_samples(self, samples: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """Run experiment on actual real VoiceBench samples."""
-        print(f"\n🚀 Testing Real VoiceBench Samples ({len(samples)} samples)")
+    def run_single_turn_tests(self, samples: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Run all single-turn tests sequentially."""
+        print(f"\n🔬 PHASE 1: Single-Turn Tests ({len(samples)} samples)")
         print("=" * 70)
-
-        results = []
-
+        
+        # Set server to single-turn mode
+        if not self.set_server_mode("single"):
+            print("❌ Failed to set server to single-turn mode")
+            return []
+        
+        # Reset conversation to ensure clean state
+        requests.post(f"{self.api_url}/api/v1/reset_conversation", timeout=30)
+        
+        single_results = []
         for i, sample in enumerate(samples):
-            print(f"\n--- Sample {i+1}/{len(samples)} ---")
-            print(f"Real Prompt: {sample['prompt']}")
-            print(f"Audio Duration: {sample.get('audio_info', {}).get('duration', 0):.2f}s")
-
-            # Test 1: Single-turn
-            print("   Testing single-turn...")
+            print(f"\n--- Single-Turn Sample {i+1}/{len(samples)} ---")
+            print(f"Prompt: {sample['prompt']}")
+            
             single_result = self.test_single_turn_response(sample['prompt'])
-
+            
             if single_result['success']:
-                print(f"   ✅ Single-turn: {single_result['response'][:100]}...")
+                print(f"✅ Single-turn: {single_result['response']}...")
             else:
-                print(f"   ❌ Single-turn failed: {single_result['error']}")
+                print(f"❌ Single-turn failed: {single_result['error']}")
+            
+            single_results.append({
+                'dataset': sample.get('dataset', 'unknown'),
+                'sample_index': i,
+                'hf_index': sample.get('index', i),
+                'prompt': sample['prompt'],
+                'audio_duration': sample.get('audio_info', {}).get('duration', 0),
+                'single_turn': {
+                    'response': single_result.get('response', ''),
+                    'length': len(single_result.get('response', '')),
+                    'word_count': len(single_result.get('response', '').split()),
+                    'success': single_result['success'],
+                    'error': single_result.get('error')
+                }
+            })
+            
+            time.sleep(0.5)  # Small delay between requests
+        
+        return single_results
 
-            # Test 2: Multi-turn
-            print("   Testing multi-turn...")
+    def run_multi_turn_tests(self, samples: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Run all multi-turn tests sequentially."""
+        print(f"\n🔬 PHASE 2: Multi-Turn Tests ({len(samples)} samples)")
+        print("=" * 70)
+        
+        # Set server to multi-turn mode
+        if not self.set_server_mode("multiturn"):
+            print("❌ Failed to set server to multi-turn mode")
+            return []
+        
+        # Reset conversation and set max turns
+        requests.post(f"{self.api_url}/api/v1/reset_conversation", timeout=30)
+        requests.post(f"{self.api_url}/api/v1/set_max_turns", json={"max_turns": 3}, timeout=30)
+        
+        multi_results = []
+        for i, sample in enumerate(samples):
+            print(f"\n--- Multi-Turn Sample {i+1}/{len(samples)} ---")
+            print(f"Prompt: {sample['prompt']}")
+            
+            # Create context messages for multi-turn
             context_messages = [
                 "I have some general knowledge questions for you.",
                 sample['prompt']
             ]
-
+            
             multi_result = self.test_multi_turn_response(context_messages, max_turns=3)
-
+            
             if multi_result['success']:
                 final_response = multi_result['responses'][-1]['response'] if multi_result['responses'] else ''
-                print(f"   ✅ Multi-turn: {final_response}...")
+                print(f"✅ Multi-turn: {final_response}...")
             else:
-                print(f"   ❌ Multi-turn failed: {multi_result['error']}")
+                print(f"❌ Multi-turn failed: {multi_result['error']}")
+            
+            multi_results.append({
+                'dataset': sample.get('dataset', 'unknown'),
+                'sample_index': i,
+                'hf_index': sample.get('index', i),
+                'prompt': sample['prompt'],
+                'audio_duration': sample.get('audio_info', {}).get('duration', 0),
+                'multi_turn': {
+                    'response': multi_result['responses'][-1]['response'] if multi_result['success'] and multi_result['responses'] else '',
+                    'length': len(multi_result['responses'][-1]['response']) if multi_result['success'] and multi_result['responses'] else 0,
+                    'word_count': len(multi_result['responses'][-1]['response'].split()) if multi_result['success'] and multi_result['responses'] else 0,
+                    'success': multi_result['success'],
+                    'error': multi_result.get('error'),
+                    'conversation_turns': len(multi_result.get('responses', []))
+                }
+            })
+            
+            time.sleep(0.5)  # Small delay between requests
+        
+        return multi_results
 
-            # Calculate metrics
-            single_response = single_result.get('response', '')
-            multi_response = multi_result['responses'][-1]['response'] if multi_result['success'] and multi_result['responses'] else ''
+    def run_experiment_on_real_samples(self, samples: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Run sequential experiment on actual real VoiceBench samples."""
+        print(f"\n🚀 Testing Real VoiceBench Samples ({len(samples)} samples)")
+        print("=" * 70)
+        print("🔄 Running SEQUENTIAL tests to preserve multi-turn context")
+        print("=" * 70)
 
+        # Phase 1: Run all single-turn tests
+        single_results = self.run_single_turn_tests(samples)
+        
+        # Phase 2: Run all multi-turn tests  
+        multi_results = self.run_multi_turn_tests(samples)
+        
+        # Combine results
+        results = []
+        for i, (single, multi) in enumerate(zip(single_results, multi_results)):
+            single_response = single['single_turn']['response']
+            multi_response = multi['multi_turn']['response']
+            
             single_length = len(single_response)
             multi_length = len(multi_response)
             single_word_count = len(single_response.split())
@@ -222,30 +317,13 @@ class CriticalRealVoiceBenchExperiment:
             multi_has_examples = any(word in multi_response.lower() for word in ['for example', 'such as', 'like', 'including'])
 
             result = {
-                'dataset': sample.get('dataset', 'commoneval'),  # Use actual dataset from sample
+                'dataset': single.get('dataset', 'unknown'),
                 'sample_index': i,
-                'hf_index': sample.get('index', i),
-                'prompt': sample['prompt'],
-                'audio_duration': sample.get('audio_info', {}).get('duration', 0),
-                'single_turn': {
-                    'response': single_response,
-                    'length': single_length,
-                    'word_count': single_word_count,
-                    'has_explanation': single_has_explanation,
-                    'has_examples': single_has_examples,
-                    'success': single_result['success'],
-                    'error': single_result.get('error')
-                },
-                'multi_turn': {
-                    'response': multi_response,
-                    'length': multi_length,
-                    'word_count': multi_word_count,
-                    'has_explanation': multi_has_explanation,
-                    'has_examples': multi_has_examples,
-                    'success': multi_result['success'],
-                    'error': multi_result.get('error'),
-                    'conversation_turns': len(multi_result.get('responses', []))
-                },
+                'hf_index': single.get('hf_index', i),
+                'prompt': single['prompt'],
+                'audio_duration': single.get('audio_duration', 0),
+                'single_turn': single['single_turn'],
+                'multi_turn': multi['multi_turn'],
                 'comparison': {
                     'length_difference': multi_length - single_length,
                     'word_count_difference': multi_word_count - single_word_count,
@@ -257,7 +335,6 @@ class CriticalRealVoiceBenchExperiment:
             }
 
             results.append(result)
-            time.sleep(1)
 
         return results
 

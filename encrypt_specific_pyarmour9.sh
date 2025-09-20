@@ -57,6 +57,16 @@ print_debug() {
 check_pyarmor() {
     print_info "Checking PyArmor installation..."
     
+    # Activate conda environment
+    print_debug "Activating conda environment..."
+    if [[ -f "/home/mbhat/miniconda/bin/activate" ]]; then
+        source /home/mbhat/miniconda/bin/activate
+        conda activate optionscope
+        print_debug "Conda environment activated"
+    else
+        print_warning "Conda activation script not found, trying direct path"
+    fi
+    
     if ! command -v "$PYARMOR_CMD" &> /dev/null; then
         print_error "PyArmor not found. Please install PyArmor 9.x first."
         print_info "Install with: pip install pyarmor==9.1.8"
@@ -206,50 +216,67 @@ encrypt_file() {
         return 1
     fi
     
-    # Encrypt the file using PyArmor 9.x
+    # Initialize PyArmor project in temp directory
+    print_debug "Initializing PyArmor project in temp directory..."
+    if ! $PYARMOR_CMD init --src "$dir" --entry "$filename" "$temp_dir" &> /dev/null; then
+        print_warning "PyArmor project initialization failed, trying direct obfuscation..."
+    fi
+    
+    # Encrypt the file using PyArmor 9.x obfuscate command
     local encryption_success=false
     local encryption_output=""
     local encryption_error=""
 
     print_info "Attempting encryption with PyArmor 9.x..."
 
-    # Try PyArmor 9.x gen command first (recommended for 9.x)
+    # Try PyArmor 9.x gen command (correct for 9.x)
     print_debug "Trying: $PYARMOR_CMD gen -O \"$temp_dir\" \"$file\""
     if encryption_output=$($PYARMOR_CMD gen -O "$temp_dir" "$file" 2>&1); then
         encryption_success=true
         print_debug "PyArmor gen command succeeded"
     else
         encryption_error="$encryption_output"
-        print_warning "PyArmor 9.x gen command failed, trying alternative approaches..."
+        print_warning "PyArmor gen command failed, checking if partial success..."
         
-        # Fallback: try obfuscate with --output
-        print_debug "Trying: $PYARMOR_CMD obfuscate --output \"$temp_dir\" \"$file\""
-        if encryption_output=$($PYARMOR_CMD obfuscate --output "$temp_dir" "$file" 2>&1); then
-            encryption_success=true
-            print_debug "PyArmor obfuscate --output command succeeded"
+        # Check if license error occurred but runtime files were created
+        if echo "$encryption_output" | grep -q "out of license"; then
+            print_error "PyArmor trial license has expired. Runtime files created but obfuscation failed."
+            print_error "To fix this issue:"
+            print_error "1. Purchase a PyArmor license, or"
+            print_error "2. Use a different obfuscation tool, or"
+            print_error "3. Contact PyArmor support for trial extension"
+            return 1
         else
-            # Fallback: try obfuscate with -O
-            print_debug "Trying: $PYARMOR_CMD obfuscate -O \"$temp_dir\" \"$file\""
-            if encryption_output=$($PYARMOR_CMD obfuscate -O "$temp_dir" "$file" 2>&1); then
-                encryption_success=true
-                print_debug "PyArmor obfuscate -O command succeeded"
-            else
-                encryption_error="$encryption_output"
-            fi
+            print_error "PyArmor gen command failed with unknown error"
         fi
     fi
 
     if [[ "$encryption_success" == true ]]; then
-        # Move encrypted file back
+        # Find the encrypted file in the output directory
+        local encrypted_file=""
         if [[ -f "${temp_dir}/${filename}" ]]; then
-            if mv "${temp_dir}/${filename}" "$file"; then
+            encrypted_file="${temp_dir}/${filename}"
+        elif [[ -f "${temp_dir}/dist/${filename}" ]]; then
+            encrypted_file="${temp_dir}/dist/${filename}"
+        elif [[ -f "${temp_dir}/pyarmor_runtime_000000/${filename}" ]]; then
+            encrypted_file="${temp_dir}/pyarmor_runtime_000000/${filename}"
+        elif [[ -f "${dir}/${filename}" ]]; then
+            # File was obfuscated in place
+            encrypted_file="${dir}/${filename}"
+        fi
+        
+        if [[ -n "$encrypted_file" ]] && [[ "$encrypted_file" != "$file" ]]; then
+            # Move encrypted file back
+            if mv "$encrypted_file" "$file"; then
                 print_success "Encrypted: $filename"
             else
                 print_error "Failed to move encrypted file: $filename"
                 return 1
             fi
+        elif [[ "$encrypted_file" == "$file" ]]; then
+            print_success "Encrypted: $filename (in place)"
         else
-            print_error "Encrypted file not found in output directory: ${temp_dir}/${filename}"
+            print_error "Encrypted file not found in expected locations"
             print_debug "Contents of temp directory:"
             ls -la "$temp_dir" || true
             return 1
